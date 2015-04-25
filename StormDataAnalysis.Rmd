@@ -1,0 +1,105 @@
+---
+title: "Storm Data Analysis - The Impact of Events"
+author: "Brett Taylor"
+date: "April 19, 2015"
+output: html_document
+---
+
+  
+##Synopsis
+Describe in 10 sentences or less the 
+
+## Data Processing
+Load libraries
+```{r configure.environment,echo=TRUE}
+library(dplyr)
+library(knitr)
+library(ggplot2)
+library(lubridate)
+```
+
+```{r process.data,echo=TRUE,message=FALSE,keep.source =TRUE,max.deparse.length=20000, cache=TRUE}
+source("downloadData.R",echo = TRUE)
+
+#storm.data<-fread("./data/StormData.csv",sep = ",",colClasses = classes,)  #fread fails to read the csv file.  It looks to be due
+#to a problem when quotes are embeded within a field.
+if(is.na(storm.data) || nrow(storm.data)==0) {
+        storm.data<-read.csv("./data/StormData.csv" )  #read.csv reads the data appropriately, and is very slow compared to fread.
+ }
+```
+
+###Clean the data
+```{r clean.data,echo=TRUE,cache=TRUE}
+
+#Convert factor to date
+storm.data$BGN_DATE<-as.POSIXct(strptime(storm.data$BGN_DATE,format = "%m/%d/%Y"))
+storm.data$END_DATE<-as.POSIXct(strptime(storm.data$END_DATE,format = "%m/%d/%Y"))
+clean.storm.data<-storm.data%>%filter(BGN_DATE >= as.POSIXct("1996-01-01"))
+```
+
+```{r review.data.quality.1,echo=TRUE}
+
+
+propdmg<-storm.data%>%filter((BGN_DATE >= as.POSIXct("1900-01-01"))&!(PROPDMGEXP %in% c("K","M","B","")))%>%mutate(beg_year=year(BGN_DATE))%>%group_by(beg_year,PROPDMGEXP)%>%summarize(count=n())%>%ungroup() 
+ggplot(propdmg,aes(x=beg_year,y=count,fill=PROPDMGEXP))+
+        geom_bar(stat="identity")+
+        theme_bw()
+cropdmg<-storm.data%>%filter((BGN_DATE >= as.POSIXct("1900-01-01"))&!(CROPDMGEXP %in% c("K","M","B","")))%>%mutate(beg_year=year(BGN_DATE))%>%group_by(beg_year,CROPDMGEXP)%>%summarize(count=n())%>%ungroup() 
+ggplot(cropdmg,aes(x=beg_year,y=count,fill=CROPDMGEXP))+
+        geom_bar(stat="identity")+
+        theme_bw()
+kable(propdmg)
+```
+
+## Results
+Your data analysis must address the following questions:
+
+* Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?   
+
+```{r pop.health,echo=TRUE,message=FALSE}
+
+by.env <-clean.storm.data%>%group_by(EVTYPE)%>%
+        summarize(injuries=sum(INJURIES),fatalities=sum(FATALITIES))%>%
+        ungroup()%>%
+        arrange(desc(injuries))
+kable(head(by.env,20))
+```
+
+*******
+
+* Across the United States, which types of events have the greatest economic consequences?    
+
+```{r cost.impact,echo=TRUE,message=FALSE}
+
+factors.for.prop.dmg.exp<-data.frame(abbrev=unique(storm.data$PROPDMGEXP),prop.dmg.exp=c(c(1e3,1e6,0,1e9),rep(0,15))) 
+factors.for.crop.dmg.exp<-data.frame(abbrev=unique(storm.data$CROPDMGEXP),crop.dmg.exp=c(c(1e6,1e3,0,1e9),rep(0,5))) 
+
+storm.data2<-left_join(clean.storm.data,factors.for.prop.dmg.exp,by=c("PROPDMGEXP"="abbrev")) 
+storm.data2<-left_join(storm.data2,factors.for.crop.dmg.exp,by=c("CROPDMGEXP"="abbrev")) 
+storm.data2<-storm.data2%>%mutate(property.damage=PROPDMG*prop.dmg.exp,crop.damage=CROPDMG*crop.dmg.exp,total.damage=property.damage+crop.damage)
+cost.by.env <-storm.data2%>%group_by(EVTYPE)%>%
+        summarize(total.damage=sum(total.damage),tot.property.damage=sum(property.damage),tot.crop.damage=sum(crop.damage))%>%
+        ungroup()%>%
+        arrange(desc(total.damage))
+kable(head(cost.by.env,20))
+```
+
+
+Consider writing your report as if it were to be read by a government or municipal manager who might be responsible for preparing for severe weather events and will need to prioritize resources for different types of events. However, there is no need to make any specific recommendations in your report.
+
+Title: Your document should have a title that briefly summarizes your data analysis
+
+Synopsis: Immediately after the title, there should be a synopsis which describes and summarizes your analysis in at most 10 complete sentences.
+
+There should be a section titled Data Processing which describes (in words and code) how the data were loaded into R and processed for analysis. In particular, your analysis must start from the raw CSV file containing the data. You cannot do any preprocessing outside the document. If preprocessing is time-consuming you may consider using the cache = TRUE option for certain code chunks.
+
+There should be a section titled Results in which your results are presented.
+
+You may have other sections in your analysis, but Data Processing and Results are required.
+
+The analysis document must have at least one figure containing a plot.
+
+Your analyis must have no more than three figures. Figures may have multiple plots in them (i.e. panel plots), but there cannot be more than three figures total.
+
+You must show all your code for the work in your analysis document. This may make the document a bit verbose, but that is okay. In general, you should ensure that echo = TRUE for every code chunk (this is the default setting in knitr).
+

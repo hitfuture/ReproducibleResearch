@@ -1,6 +1,6 @@
-
-site<-"https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2Factivity.zip"
-file.name<-"activity.zip"
+library(data.table)
+site<-"https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
+file.name<-"StormData.csv.bz2"
 data.dir <-"./data"
 path.name<-paste(data.dir,file.name,sep="/")
 # downloadData.R
@@ -15,7 +15,8 @@ if(!file.exists(path.name)) {
         data.source.url<-site
         download.file(url=data.source.url,destfile=path.name,method="curl")
         download.date<-date()
-        ##Manually unzip the file so that it can be processed.        
+        unzip(path.name,exdir = data.dir)
+        unzip(zipfile = path.name,list = TRUE)
         
 } 
 

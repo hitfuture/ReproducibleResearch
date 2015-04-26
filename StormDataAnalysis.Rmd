@@ -1,5 +1,5 @@
 ---
-title: "Storm Data Analysis - The Impact of Events"
+title: "Storm Data Analysis - \n The Impact of Events on Population Health and the Economy"
 author: "Brett Taylor"
 date: "April 19, 2015"
 output: html_document
@@ -7,18 +7,24 @@ output: html_document
 
   
 ##Synopsis
-Describe in 10 sentences or less the 
+The impact of a storm may cause finanical burdens, and harm to the population. Between 1996, and 2011, there were over 650,000 documented events by the federal government.  Each of the events that are documented contain how many injuries, and fatalities occured.  They also record the cost incurred through damage to property, or to crops.  
 
-## Data Processing
+Analysis of the events across the most top 3 most impactful event types to Population Health were Tornado's, Excessive Heat, and Floods.  The top 3 most costly event types were Floods, Hurricane/Typhoon, and Storm surges.  The review of the events shows that the majority of the storm events have occured in the central and eastern United States, and certain locations like Oklahoma, the Carolina's, and New Jersy and Deleware have very high levels of storm activity.
+## Data Processing   
+
 Load libraries
-```{r configure.environment,echo=TRUE}
+```{r configure.environment,warning=FALSE,message=FALSE,echo=TRUE}
 library(dplyr)
 library(knitr)
 library(ggplot2)
 library(lubridate)
+library(stats)
+library(reshape2)
+library(data.table)
 ```
 
-```{r process.data,echo=TRUE,message=FALSE,keep.source =TRUE,max.deparse.length=20000, cache=TRUE}
+Load Data from Internet site.  
+```{r process.data,echo=TRUE,message=FALSE,cache=TRUE}
 library(data.table)
 site<-"https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
 file.name<-"StormData.csv.bz2"
@@ -45,81 +51,165 @@ if(!file.exists(path.name)) {
 #to a problem when quotes are embeded within a field.
 if(is.na(storm.data) || nrow(storm.data)==0) {
         storm.data<-read.csv("./data/StormData.csv" )  #read.csv reads the data appropriately, and is very slow compared to fread.
+        storm.data<-as.data.table(storm.data)
  }
-```
 
-###Clean the data
+file.name<-"Gaz_counties_national.zip"
+site<-"http://www2.census.gov/geo/docs/maps-data/data/gazetteer/Gaz_counties_national.zip"
+path.name<-paste(data.dir,file.name,sep="/")
+counties<-read.csv("http://www2.census.gov/geo/docs/reference/codes/files/national_county.txt")
+if(!file.exists(path.name)) {
+        data.source.url<-site
+        download.file(url=data.source.url,destfile=path.name,method="curl")
+        download.date<-date()
+        unzip(path.name,exdir = data.dir)
+        
+} 
+county.data<-read.csv(paste(data.dir,"Gaz_counties_national.txt",sep="/"),sep="\t",colClasses="character")
+county.data<-as.data.table(county.data)
+```
+###Prepare the data
 ```{r clean.data,echo=TRUE,cache=TRUE}
 
 #Convert factor to date
+county.data$INTPTLAT<-as.numeric(county.data$INTPTLAT)
+county.data$INTPTLONG<-as.numeric(county.data$INTPTLONG)
 storm.data$BGN_DATE<-as.POSIXct(strptime(storm.data$BGN_DATE,format = "%m/%d/%Y"))
 storm.data$END_DATE<-as.POSIXct(strptime(storm.data$END_DATE,format = "%m/%d/%Y"))
-clean.storm.data<-storm.data%>%filter(BGN_DATE >= as.POSIXct("1996-01-01"))
+storm.data$GEOID<-sprintf("%1$02.0f%2$03.0f",storm.data$STATE__,storm.data$COUNTY)
+storm.data<-left_join(storm.data,county.data)
 ```
+
+
+### Review data quality
+The valid values for PROPDMGEXP and CROPDMGEXP are "K", "M", and "B"
 
 ```{r review.data.quality.1,echo=TRUE}
 
 
-propdmg<-storm.data%>%filter((BGN_DATE >= as.POSIXct("1900-01-01"))&!(PROPDMGEXP %in% c("K","M","B","")))%>%mutate(beg_year=year(BGN_DATE))%>%group_by(beg_year,PROPDMGEXP)%>%summarize(count=n())%>%ungroup() 
-ggplot(propdmg,aes(x=beg_year,y=count,fill=PROPDMGEXP))+
-        geom_bar(stat="identity")+
-        theme_bw()
-cropdmg<-storm.data%>%filter((BGN_DATE >= as.POSIXct("1900-01-01"))&!(CROPDMGEXP %in% c("K","M","B","")))%>%mutate(beg_year=year(BGN_DATE))%>%group_by(beg_year,CROPDMGEXP)%>%summarize(count=n())%>%ungroup() 
-ggplot(cropdmg,aes(x=beg_year,y=count,fill=CROPDMGEXP))+
-        geom_bar(stat="identity")+
-        theme_bw()
-kable(propdmg)
+propdmg<-storm.data%>%
+        filter(!(PROPDMGEXP %in% c("K","M","B","")))%>%
+        mutate(beg_year=year(BGN_DATE),TYPE="PROPERTY")%>%
+        group_by(beg_year,TYPE)%>%
+        summarize(count=n())%>%
+        ungroup() 
+
+
+cropdmg<-storm.data%>%
+        filter(!(CROPDMGEXP %in% c("K","M","B","")))%>%
+        mutate(beg_year=year(BGN_DATE),TYPE="CROP")%>%
+        group_by(beg_year,TYPE)%>%
+        summarize(count=n())%>%
+        ungroup() 
+invalid.exp.data=rbind(propdmg,cropdmg)
 ```
+
+Years with invalid values for Crop and Property damage exponent attributes.
+```{r review.data.quality.2,echo=TRUE}
+kable(xtabs(count~.,data=invalid.exp.data))
+```
+
+###Subset data based on quality metrics
+The data quality review indicates that tighter controls on data quality were put in place as of calendar year 1996.  
+```{r subset.data.1,echo=TRUE,warning=FALSE}
+clean.storm.data<-storm.data%>%filter(BGN_DATE >= as.POSIXct("1996-01-01"))
+factors.for.prop.dmg.exp<-data.frame(abbrev=as.factor(c("K","M","B","")),prop.dmg.exp=c(1e3,1e6,1e9,0))
+factors.for.crop.dmg.exp<-data.frame(abbrev=as.factor(c("K","M","B","")),crop.dmg.exp=c(1e3,1e6,1e9,0)) 
+
+clean.storm.data<-left_join(clean.storm.data,factors.for.prop.dmg.exp,by=c("PROPDMGEXP"="abbrev")) 
+clean.storm.data<-left_join(clean.storm.data,factors.for.crop.dmg.exp,by=c("CROPDMGEXP"="abbrev")) 
+clean.storm.data<-clean.storm.data%>%
+        mutate(property.damage=PROPDMG*prop.dmg.exp,
+               crop.damage=CROPDMG*crop.dmg.exp)
+```
+The data subset based on years `r year(min(clean.storm.data$BGN_DATE))` through `r year(max(clean.storm.data$BGN_DATE))` contains `r prettyNum(nrow(clean.storm.data),big.mark=",")` observations which is sufficient to perform an accurate analysis.
 
 ## Results
 Your data analysis must address the following questions:
 
+###Populationsequences of storm related events   
 * Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?   
 
 ```{r pop.health,echo=TRUE,message=FALSE}
 
 by.env <-clean.storm.data%>%group_by(EVTYPE)%>%
-        summarize(injuries=sum(INJURIES),fatalities=sum(FATALITIES))%>%
+        summarize(Injury=sum(INJURIES),Fatality=sum(FATALITIES))%>%
         ungroup()%>%
-        arrange(desc(injuries))
-kable(head(by.env,20))
+        arrange(desc(Fatality+Injury))
+top.10<-head(by.env,10)
+#Sequence the top 10 by Event Type - largest impact to smallest
+top.10$EVTYPE<-factor(top.10$EVTYPE,levels=unique(top.10$EVTYPE))
+top.10.injuries.fatalities<-melt(top.10,id=c("EVTYPE"),impact=c("INJURIES","FATALITIES"))
+ 
+
+p1 <-ggplot(top.10.injuries.fatalities,aes(x=EVTYPE,y=value,fill=variable))+
+        geom_bar(stat="identity")+
+        theme_bw()+
+        labs(x="Storm Event Type",y="Count",
+             title="Population Health Impact of Storm Events\n USA Top 10 Event Types\n1996 through 2011",             
+             fill="Impact")+
+        theme(axis.text.x=element_text(angle=30, hjust=1,vjust=1,size=8),
+              legend.position=c(1,1),legend.justification=c(1,1)) 
+ 
+print(p1)
 ```
+
+**Figure 1** The impact to USA population health caused by storm events
 
 *******
-
+###Economic consequences of storm related events
 * Across the United States, which types of events have the greatest economic consequences?    
+To determine the economic consequences, we need to understand the cost of property damage, and the cost of crop damage.  In addition, each injury and fatality has an economic impact on the society.   The attributes we will review from this 
+Relative costs of injury vs. fatality
+http://safety.fhwa.dot.gov/facts_stats/t75702.cfm
+http://www.fhwa.dot.gov/publications/research/safety/05051/05051.pdf
+http://www.msha.gov/s&hinfo/costgenerator/costgenerator.htm
 
-```{r cost.impact,echo=TRUE,message=FALSE}
+```{r cost.impact,echo=TRUE,message=FALSE,warning=FALSE}
 
-factors.for.prop.dmg.exp<-data.frame(abbrev=unique(storm.data$PROPDMGEXP),prop.dmg.exp=c(c(1e3,1e6,0,1e9),rep(0,15))) 
-factors.for.crop.dmg.exp<-data.frame(abbrev=unique(storm.data$CROPDMGEXP),crop.dmg.exp=c(c(1e6,1e3,0,1e9),rep(0,5))) 
 
-storm.data2<-left_join(clean.storm.data,factors.for.prop.dmg.exp,by=c("PROPDMGEXP"="abbrev")) 
-storm.data2<-left_join(storm.data2,factors.for.crop.dmg.exp,by=c("CROPDMGEXP"="abbrev")) 
-storm.data2<-storm.data2%>%mutate(property.damage=PROPDMG*prop.dmg.exp,crop.damage=CROPDMG*crop.dmg.exp,total.damage=property.damage+crop.damage)
-cost.by.env <-storm.data2%>%group_by(EVTYPE)%>%
-        summarize(total.damage=sum(total.damage),tot.property.damage=sum(property.damage),tot.crop.damage=sum(crop.damage))%>%
+cost.by.env <-clean.storm.data%>%
+        group_by(EVTYPE)%>%
+        summarize( 
+                  tot.property.damage=sum(property.damage),
+                  tot.crop.damage=sum(crop.damage))%>%
         ungroup()%>%
-        arrange(desc(total.damage))
-kable(head(cost.by.env,20))
+        arrange(desc(tot.property.damage+ tot.crop.damage))
+top.10.cost<-head(cost.by.env,10)
+#Sequence the top 10 by Event Type - largest cost impact to smallest
+top.10.cost$EVTYPE<-factor(top.10.cost$EVTYPE,levels=unique(top.10.cost$EVTYPE))
+
+top.10.cost<-melt(top.10.cost,id=c("EVTYPE"))
+p2 <-ggplot(top.10.cost,aes(x=EVTYPE,y=value/1e9,fill=variable))+
+        geom_bar(stat="identity",color="black")+
+        theme_bw()+
+        labs(x="Storm Event Type",y="Cost in $Billion",
+             title="Economic Impact of Storm Events\n USA Top 10 Event Types\n1996 through 2011",             
+             fill="Impact")+
+        theme(axis.text.x=element_text(angle=30, hjust=1,vjust=1,size=8),
+              legend.position=c(1,1),legend.justification=c(1,1))  
+ 
+print(p2)
+
 ```
 
+**Figure 2** The impact fiscal impact of storm events in the USA
 
-Consider writing your report as if it were to be read by a government or municipal manager who might be responsible for preparing for severe weather events and will need to prioritize resources for different types of events. However, there is no need to make any specific recommendations in your report.
+```{r across.usa,echo=TRUE,message=FALSE}
 
-Title: Your document should have a title that briefly summarizes your data analysis
+library(ggmap)
+#test.data<-clean.storm.data[sample(1:nrow(clean.storm.data),200000,replace = FALSE),]
+test.data<-as.data.table(clean.storm.data)
+USA.map<-qmap("United States",zoom=4,
+     base_layer = ggplot(aes(x=INTPTLONG, y=INTPTLAT), data = test.data))
+USA.map +
+stat_density2d(aes(x = INTPTLONG, y = INTPTLAT, fill = ..level.., alpha = ..level..),
+#bins = 5, geom = "polygon",
+geom="polygon",
+data = test.data) +
+scale_fill_gradient(low = "black", high = "red")+  
+        theme(legend.position = "none", axis.title = element_blank(), text = element_text(size = 12))+
+        facet_grid(EVTYPE~.)
+```
 
-Synopsis: Immediately after the title, there should be a synopsis which describes and summarizes your analysis in at most 10 complete sentences.
-
-There should be a section titled Data Processing which describes (in words and code) how the data were loaded into R and processed for analysis. In particular, your analysis must start from the raw CSV file containing the data. You cannot do any preprocessing outside the document. If preprocessing is time-consuming you may consider using the cache = TRUE option for certain code chunks.
-
-There should be a section titled Results in which your results are presented.
-
-You may have other sections in your analysis, but Data Processing and Results are required.
-
-The analysis document must have at least one figure containing a plot.
-
-Your analyis must have no more than three figures. Figures may have multiple plots in them (i.e. panel plots), but there cannot be more than three figures total.
-
-You must show all your code for the work in your analysis document. This may make the document a bit verbose, but that is okay. In general, you should ensure that echo = TRUE for every code chunk (this is the default setting in knitr).
 

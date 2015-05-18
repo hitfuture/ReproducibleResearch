@@ -1,0 +1,31 @@
+---
+title: "Reproducible Research - Project 1"
+author: "Brett Taylor"
+date: "April 10, 2015"
+output: html_document
+---
+
+###Loading and preprocessing the data
+
+
+
+```{r read.data, echo=TRUE}
+activities<-read.csv("./data/activity.csv")
+```
+
+###What is mean total number of steps taken per day?   
+Total steps taken `r sum(activities$steps[!is.na(activities$steps)])`
+```{r mean.steps, echo=TRUE,results='asis',message=FALSE}
+library(dplyr)
+library(knitr)
+library(xtable)
+
+by.day<-activities%>%group_by(date)%>%summarize(total.steps=sum(steps))
+print(xtable(by.day))
+```
+
+```{r plot.overview, echo=TRUE,results='asis'}
+plot(activities)
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.

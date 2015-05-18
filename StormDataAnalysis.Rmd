@@ -2,17 +2,18 @@
 title: "The Impact of Storm Events on Population Health and the Economy of the U.S."
 author: "Brett Taylor"
 date: "April 19, 2015"
-output: html_document
+output: pdf_document
 ---
 
   
-##Synopsis
-The impact of a storm may cause finanical burdens, and harm to the population. Between 1996, and 2011, there were over 650,000 documented events by the federal government.  Each of the events that are documented contain how many injuries, and fatalities occured.  They also record the cost incurred through damage to property, or to crops.  
+#Synopsis
+The impact of a storm may cause financial burdens, and harm to the population. Between 1996, and 2011, there were over 650,000 documented events by the federal government.  Each of the events that are documented contain how many injuries, and fatalities occurred.  They also record the cost incurred through damage to property, or to crops.  
 
-Analysis of the events across the most top 3 most impactful event types to Population Health were Tornado's, Excessive Heat, and Floods.  The top 3 most costly event types were Floods, Hurricane/Typhoon, and Storm surges.  The review of the events shows that the majority of the storm events have occured in the central and eastern United States, and certain locations like Oklahoma and Kansas, the Carolina's, and New Jersy and Deleware have very high levels of storm activity.
-## Data Processing   
+Analysis of the events across the most top 3 most impactful event types to Population Health were Tornado's, Excessive Heat, and Floods.  The top 3 most costly event types were Floods, Hurricane/Typhoon, and Storm surges.  The review of the events shows that the majority of the storm events have occurred in the central and eastern United States, and certain locations like Oklahoma and Kansas, the Carolina's, and New Jersey and Delaware have very high levels of storm activity.    
 
-Load libraries
+# Data Processing   
+
+Libraries used to process and analyze data   
 ```{r configure.environment,warning=FALSE,message=FALSE,echo=TRUE}
 library(dplyr)
 library(knitr)
@@ -21,12 +22,14 @@ library(lubridate)
 library(stats)
 library(reshape2)
 library(data.table)
+library(ggmap)
 ```
 
-This analysis utilizes 2 separate data sets.  The primary data set is the Storm Data Event data set maintained by the U.S. National Weather Service.   The secondary data set includes geographic data associated with each county in the United states, and is maintained by by United States Census Buereau.  Each of these sets of data were available in the Internet, and the data was directly downloaded and processed in the following R code chunk.  
+This analysis utilizes 2 separate data sets.  The primary data set is the Storm Data Event data set maintained by the U.S. National Weather Service.   The secondary data set includes geographic data associated with each county in the United states, and is maintained by by United States Census Bureau.  Each of these sets of data were available in the Internet, and the data was directly downloaded and processed in the following R code chunk.  
 
-```{r process.data,echo=TRUE,message=FALSE,cache=TRUE}
-library(data.table)
+**Obtain and read Storm Event data from the U.S. National Oceanic and Atomospheric Administration**   
+
+```{r process.data.1,echo=TRUE,message=FALSE,cache=TRUE}
 site<-"https://d396qusza40orc.cloudfront.net/repdata%2Fdata%2FStormData.csv.bz2"
 file.name<-"StormData.csv.bz2"
 data.dir <-"./data"
@@ -47,11 +50,17 @@ if(!file.exists(path.name)) {
         unzip(zipfile = path.name,list = TRUE)
          
 } 
+message("Reading storm data")
+storm.data<-read.csv("./data/StormData.csv" )  
+message("Storm data read is complete")
+#read.csv reads the data appropriately, and is very slow compared to fread.  fread fails due to embeded quotes. 
+storm.data<-as.data.table(storm.data)
+```
 
-if(exists("storm.data"") || nrow(storm.data)==0) {
-        storm.data<-read.csv("./data/StormData.csv" )  #read.csv reads the data appropriately, and is very slow compared to fread.
-        storm.data<-as.data.table(storm.data)
- }
+**Obtain and read County geographic data from the U.S. Census Bureau**    
+
+```{r process.data.2,echo=TRUE,message=FALSE,cache=TRUE}
+
 #Retrieve US County data which includes the latitude, and longitude of the centroid for each county
 file.name<-"Gaz_counties_national.zip"
 site<-"http://www2.census.gov/geo/docs/maps-data/data/gazetteer/Gaz_counties_national.zip"
@@ -64,12 +73,15 @@ if(!file.exists(path.name)) {
         unzip(path.name,exdir = data.dir)
         
 } 
+message("Reading county data")
 county.data<-read.csv(paste(data.dir,"Gaz_counties_national.txt",sep="/"),sep="\t",colClasses="character")
+message("Reading county data is complete")
 county.data<-as.data.table(county.data)
+
 ```
 ###Prepare the data
-Prior to analysis, the data is transformed to allow for a basic quality review.  
-```{r clean.data,echo=TRUE,cache=TRUE,dependson=}
+Prior to analysis, the data is transformed to allow a simple quality review.  
+```{r clean.data,echo=TRUE,cache=TRUE,dependson="process.data"}
 
 county.data$INTPTLAT <- as.numeric(county.data$INTPTLAT)
 county.data$INTPTLONG<-as.numeric(county.data$INTPTLONG)
@@ -82,7 +94,7 @@ clean.storm.data$GEOID<-sprintf("%1$02.0f%2$03.0f",storm.data$STATE__,storm.data
  #Narrow down the columns to what will be used for graphing.
 county.data<-county.data%>%select(GEOID,INTPTLAT,INTPTLONG) 
 #Combine these data.frames together based on the GEOID.  This allows map based analysis.
-clean.storm.data<-left_join(clean.storm.data,county.data) 
+clean.storm.data<-left_join(clean.storm.data,county.data,by="GEOID") 
 ```
 
 
@@ -109,7 +121,8 @@ cropdmg<-clean.storm.data%>%
 invalid.exp.data=rbind(propdmg,cropdmg)
 ```
 
-Years with invalid values for Crop and Property damage exponent attributes.
+Years with invalid values for Crop and Property damage exponent attributes.   
+
 ```{r review.data.quality.2,echo=TRUE}
 kable(xtabs(count~.,data=invalid.exp.data))
 ```
@@ -117,31 +130,35 @@ kable(xtabs(count~.,data=invalid.exp.data))
 The conclusion from this is that the data set better maintained after December of 1995.  This does not validate other parts of the data set, and it does give an indication of data quality. 
 
 ###Subset data based on quality metrics
-The data quality review indicates that tighter controls on data quality were put in place as of calendar year 1996.  This analysis has subseted the data between Jan 1, 1996, and November 30, 2011.  
+The data quality review indicates that tighter controls on data quality were put in place as of calendar year 1996.  This analysis has subset-ed the data between Jan 1, 1996, and November 30, 2011.  
 
 ```{r subset.data.1,echo=TRUE,warning=FALSE}
 clean.storm.data<-clean.storm.data%>%filter(BGN_DATE >= as.POSIXct("1996-01-01"))
 #Map the dollar impact based on the PROPDMGEXP, and CROPDMGEXP abbreviations. 
-factors.for.prop.dmg.exp<-data.frame(abbrev=as.factor(c("K","M","B","")),prop.dmg.exp=c(1e3,1e6,1e9,0))
-factors.for.crop.dmg.exp<-data.frame(abbrev=as.factor(c("K","M","B","")),crop.dmg.exp=c(1e3,1e6,1e9,0)) 
+factors.for.prop.dmg.exp<-data.frame(PROPDMGEXP=as.factor(c("K","M","B","")),prop.dmg.exp=c(1e3,1e6,1e9,0))
+factors.for.crop.dmg.exp<-data.frame(CROPDMGEXP=as.factor(c("K","M","B","")),crop.dmg.exp=c(1e3,1e6,1e9,0)) 
 #Join the data sets based on the abbreviations
-clean.storm.data<-left_join(clean.storm.data,factors.for.prop.dmg.exp,by=c("PROPDMGEXP"="abbrev")) 
-clean.storm.data<-left_join(clean.storm.data,factors.for.crop.dmg.exp,by=c("CROPDMGEXP"="abbrev")) 
+clean.storm.data<-left_join(clean.storm.data,factors.for.prop.dmg.exp,by=c("PROPDMGEXP"="PROPDMGEXP"),copy=TRUE) 
+clean.storm.data<-left_join(clean.storm.data,factors.for.crop.dmg.exp,by=c("CROPDMGEXP"="CROPDMGEXP"),copy=TRUE) 
 #Compute the total property and crop damage expense
 clean.storm.data<-clean.storm.data%>%
         mutate(property.damage=PROPDMG*prop.dmg.exp,
                crop.damage=CROPDMG*crop.dmg.exp)
 ```
 
-The data subset is based on years `r year(min(clean.storm.data$BGN_DATE))` through `r year(max(clean.storm.data$BGN_DATE))` contains `r prettyNum(nrow(clean.storm.data),big.mark=",")` observations which is sufficient to perform an accurate analysis.
+The data subset is starts on date`r (min(clean.storm.data$BGN_DATE))` through `r (max(clean.storm.data$BGN_DATE))` contains `r prettyNum(nrow(clean.storm.data),big.mark=",")` observations which is sufficient to perform an accurate analysis.
 
-## Results
-Your data analysis must address the following questions:
+# Results
+The results of the analysis of the storm based events follows and focuses in 2 main areas:   
 
-###The Consequences of storm related events on Population Health
-* Across the United States, which types of events (as indicated in the EVTYPE variable) are most harmful with respect to population health?   
+* Population Health   
+* Economic Impact   
 
-```{r pop.health,echo=TRUE,message=FALSE,warning=FALSE}
+###The Consequences of storm related events on Population Health    
+
+Storms events often create an impact on the health of the population.  Injuries, and fatalites are often the outcome of an event.  The number of injuries and fatalities are tracked by the National Weather Service, and the top ten event types are displayed below.
+
+```{r pop_health_data,echo=TRUE,message=FALSE,warning=FALSE}
 
 by.env <-clean.storm.data%>%group_by(EVTYPE)%>%
         summarize(Injury=sum(INJURIES),Fatality=sum(FATALITIES))%>%
@@ -152,6 +169,11 @@ top.10<-head(by.env,10)
 top.10$EVTYPE<-factor(top.10$EVTYPE,levels=unique(top.10$EVTYPE))
 top.10.injuries.fatalities<-melt(top.10,id=c("EVTYPE"),impact=c("INJURIES","FATALITIES"))
  
+```
+
+Below is the plot of the impact of storm events on the U.S. Population's Health.    
+
+```{r pop_health,echo=TRUE,message=FALSE,warning=FALSE}
 
 p1 <-ggplot(top.10.injuries.fatalities,aes(x=EVTYPE,y=value,fill=variable))+
         geom_bar(stat="identity")+
@@ -165,20 +187,18 @@ p1 <-ggplot(top.10.injuries.fatalities,aes(x=EVTYPE,y=value,fill=variable))+
 print(p1)
 ```
 
-**Figure 1** The impact to USA population health caused by the top 10 storm event types
-The population health of the United States is most impacted by `r top.10$EVTYPE[1]`.  
+**Figure 1** The impact to USA population health caused by the top 10 storm event types   
 
+The population health of the United States is most impacted by `r top.10$EVTYPE[1]`.  The topy 3 most sigificant event types that impact population health are Tornados, Excessive Heat and Floods.  
 
 *******
 ###Economic consequences of storm related events
-* Across the United States, which types of events have the greatest economic consequences?    
-To determine the economic consequences, we need to understand the cost of property damage, and the cost of crop damage.  In addition, each injury and fatality has an economic impact on the society.   The attributes we will review from this 
-Relative costs of injury vs. fatality
-http://safety.fhwa.dot.gov/facts_stats/t75702.cfm
-http://www.fhwa.dot.gov/publications/research/safety/05051/05051.pdf
-http://www.msha.gov/s&hinfo/costgenerator/costgenerator.htm
+To determine the economic consequences of storm events, we need to understand the cost of property damage, and the cost of crop damage. 
 
-```{r cost.impact,echo=TRUE,message=FALSE,warning=FALSE}
+*Each injury and fatality has an economic impact on the society. These data are not included in this analyis, and will not be considered at this time.  If you would like to review potential impact of [safety](http://safety.fhwa.dot.gov/facts_stats/t75702.cfm) this website is a good starting place. *
+
+
+```{r cost_impact_data,echo=TRUE,message=FALSE,warning=FALSE}
 
 
 cost.by.env <-clean.storm.data%>%
@@ -193,6 +213,10 @@ top.10.cost<-head(cost.by.env,10)
 top.10.cost$EVTYPE<-factor(top.10.cost$EVTYPE,levels=unique(top.10.cost$EVTYPE))
 
 top.10.cost<-melt(top.10.cost,id=c("EVTYPE"))
+```
+
+Below is the plot of the economic impact of storm events.    
+```{r cost_impact,echo=TRUE,message=FALSE,warning=FALSE}
 p2 <-ggplot(top.10.cost,aes(x=EVTYPE,y=value/1e9,fill=variable))+
         geom_bar(stat="identity",color="black")+
         theme_bw()+
@@ -206,14 +230,15 @@ print(p2)
 
 ```
 
-**Figure 2** The impact fiscal impact of storm events in the USA
+**Figure 2** The impact fiscal impact of storm events in the USA   
+
+The top three storm event types that create the largest cost impact are Floods, Hurricanes & Typhoons, and Storm Surges.  The major impact in this analysis is due to property damage.
 
 ###Distribution of Storm Events across the continental United States
-Not all areas in the United States suffer from the same level of storm events.   The distribution of storm events is demonstrated through a geographical mapping of all storm events between 1996, and 2011.   
+Not all areas in the United States suffer from the same level of storm events.   The distribution of storm events is demonstrated through a geographical mapping of *all* storm events between 1996, and 2011.  While this does not indicate the impact of the event, it does present the frequency of events of all types.   
 
-```{r across.usa,echo=TRUE,message=FALSE,warning=FALSE,fig.width=10,fig.height=10}
+```{r across_usa,echo=TRUE,message=FALSE,warning=FALSE,fig.width=10,fig.height=10}
 
-library(ggmap)
 #test.data<-clean.storm.data[sample(1:nrow(clean.storm.data),200000,replace = FALSE),]
 test.data<-as.data.table(clean.storm.data)
 USA.map<-qmap("United States",zoom=4,color="bw",
@@ -228,4 +253,4 @@ USA.map +
 
 **Figure 3** The distribution of all storm events across the continental United States
 
-The top areas of with the most signifcant number of storm events are in the central and north eastern United States.  The western United States demonstrates small areas of storm events during the time period reviewed.
+The top areas with the most significant number of storm events are in the central and north eastern United States.  The western United States demonstrates small areas of storm events during the time period reviewed.  So if you want to live in a safe, and beautiful location, join us in **Idaho**!

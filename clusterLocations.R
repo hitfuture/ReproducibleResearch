@@ -1,74 +1,149 @@
 library(stats)
+library(dplyr)
 library(ggplot2)
 library(ggmap)
+library(manipulate)
 locations <- read.csv("data/locations.csv")
 
-geo.dist = function(df) {
-        require(geosphere)
-        require(dplyr)
-        d <- function(i,z){         # z[1:2] contain long, lat
-                
-                dist <- rep(0,nrow(z))
-                dist[i:nrow(z)] <- distHaversine(z[i:nrow(z),13:14],z[i,13:14])
-                return(dist)
+buildClusters <- function ( total.clusters) {
+  
+  geo.dist = function(df) {
+          require(geosphere)
+          require(dplyr)
+          d <- function(i,z) {
+                  # z[1:2] contain long, lat
+                  
+                  dist <- rep(0,nrow(z))
+                  dist[i:nrow(z)] <-
+                          distHaversine(z[i:nrow(z),13:14],z[i,13:14])
+                  return(dist)
+          }
+          dm <- do.call(cbind,lapply(1:nrow(df),d,df))
+          return(as.dist(dm))
+  }
+  km <- kmeans(geo.dist(locations),centers = total.clusters)
+  hc <- hclust(geo.dist(locations))
+  
+  locations$clustHc <<- cutree(hc,total.clusters)
+  locations$clustKm <<- km$cluster
+
+}
+mapRegionByCluster <-
+        function (lon.lat = "Boise, Idaho", zoom = 3, curr.span,mssg = "") {
+                a.map <- qmap(lon.lat, zoom = zoom, 
+                              base_layer = ggplot(aes(x = lon, y = lat), data = c1))
+                a.map <- a.map +
+                        geom_point(aes(
+                                x = lon, y = lat,size = 4,color = location_type
+                        ), data = c1) +
+                        theme(
+                                legend.position = "none", axis.title = element_blank(),
+                                text = element_text(size = 12)
+                        ) +
+                        labs(
+                                title = paste("Sites",nrow(c1),
+                                        "\nMap", i,"zoom",zoom, "lon span", round(curr.span[1],1),"lat span",round(curr.span[2],1),"\n",mssg, sep = ": "
+                                )
+                        )
+                print(a.map)
         }
-        dm <- do.call(cbind,lapply(1:nrow(df),d,df))
-        return(as.dist(dm))
-}
-km <- kmeans(geo.dist(locations),centers=7) 
-hc <- hclust(geo.dist(locations))
-plot(hc)    
-km$cluster
-locations$clustHc <-cutree(hc,5)
-locations$clustKm <- km$cluster
-set.seed(1532)
-lrg <- 1:nrow(locations)
-index1 <- sample(lrg,size = 1)
-index2 <- sample(lrg,size = 1)
 
-point1<-c(locations[index1,]$lon,locations[index1,]$lat)
-point2<-c(locations[index2,]$lon,locations[index2,]$lat)
 
-dist<-distHaversine(point1,point2)
-library(dplyr)
 spans <- NULL
-for(i in 1:max(locations$clustKm)) {
-        c1 <- locations%>%filter(clustKm==i)
-        c1.lon.lat <- c1%>%select(lon,lat)
-        c1.centroid <- centroid(c1.lon.lat)
-   #     c1.span <- span(as.matrix(c1.lon.lat),fun=max)
-   #     spans <- cbind(spans, c(i,c1.span))
-        
-        c1.map<-qmap(c1.centroid,zoom=8,color="bw",
-                     base_layer = ggplot(aes(x=lon, y=lat), data = c1))
-        c1.map <- c1.map + 
-                geom_point(aes(x = lon, y = lat,size=4,color=clustKm), data = c1 ) +
-                theme(legend.position = "none", axis.title = element_blank(), text = element_text(size = 12)) 
-        print(c1.map)
+ 
+notMapped <- function(warn.message) {
+        val <- 0
+        m <- regexec("^Removed.*([0-9]+)",warn.message)
+        matches <- regmatches(warn.message,m)
+        a <- matches[[1]]
+        len <- length(a)
+        if (len > 1) {
+                val <- as.integer(a[2])
+        }
+        val
 }
 
-c2 <- locations%>%filter(clustKm==2)
-c2.centroid <- centroid(c2%>%select(lon,lat))
+
+zoomJumpBasedOnWarning <- function(warn.message) {
+        row.count <- notMapped(warn.message)
+        if (row.count > 10) {
+                return(8)
+        }
+        if (row.count > 7) {
+                return(4)
+        }
+        if (row.count > 3) {
+                return(3)
+        }
+        if (row.count > 0) {
+                return(1)
+        }
+        return(0)
+        
+        
+}
+#        next.seed <-sample(1:100000,1)
+#        last.seed <- next.seed
+#        set.seed(next.seed)
+        tot.clusters <- 8
+        buildClusters(tot.clusters)
+                
+
+for (i in 1:max(locations$clustHc)) {
+        c1 <- locations %>% filter(clustHc == i)
+        c1.lon.lat <- c1 %>% select(lon,lat)
+        c1.centroid <- centroid(c1.lon.lat)
+        c1.span <- span(as.matrix(c1.lon.lat),fun = max)
+        zoom <- min(max(min(round((1 / log(
+                sum(c1.span)
+        ) * 100),0),15) + 1,3),20)
+        spans <- rbind(spans, c(i,c1.span))
+        tryCatch({
+                mapRegionByCluster(c1.centroid,zoom = zoom,curr.span = c1.span)
+        },
+        warning = function(warn) {
+                message(paste("got first warning: ",warn))
+                zoom <- zoom - zoomJumpBasedOnWarning(warn$message)
+                
+                
+        tryCatch({
+                mapRegionByCluster(
+                        c1.centroid,zoom = zoom,curr.span = c1.span,mssg = paste("WARNING 1:",warn)
+                )
+        },
+        warning = function(warn) {
+                message(paste("got second warning: ",warn))
+                
+                
+                zoom <- zoom-zoomJumpBasedOnWarning(warn$message)
+                tryCatch(
+                        {
+                                mapRegionByCluster(c1.centroid,zoom = zoom,curr.span = c1.span,mssg = paste("WARNING 2:",warn))
+                        } ,  warning = function(warn) {
+                                message(paste(
+                                        "got third warning: ",warn
+                                ))
+                                zoom <- zoom-zoomJumpBasedOnWarning(warn$message)
+                                
+                               tryCatch( {
+                                        mapRegionByCluster(c1.centroid, zoom = zoom,curr.span = c1.span,mssg = paste("WARNING 3:",warn))},
+                                        warning = function(warn) {
+                                                message(paste(
+                                                        "got fourth warning: ",warn
+                                                ))
+                                               # zoom <- zoom-zoomJumpBasedOnWarning(warn$message)
+                                                mapRegionByCluster(c1.centroid, zoom = 4,curr.span = c1.span,mssg = paste("WARNING 4:",warn))
+                                                
+                                        }
+                                )
+                                
+                        })
+        })
+        }
+        )
 
 
-c2.map<-qmap(c2.centroid,zoom=8,color="bw",
-             base_layer = ggplot(aes(x=lon, y=lat), data = c2))
-c2.map + 
-        geom_point(aes(x = lon, y = lat,size=4,color="red"), data = c2 ) +
-           theme(legend.position = "none", axis.title = element_blank(), text = element_text(size = 12)) 
+}
 
 
-locations%>%group_by(clust)%>%summarize(count=n())
-locations%>%group_by(clustKm)%>%summarize(count=n())
-
-#test.data<-clean.storm.data[sample(1:nrow(clean.storm.data),200000,replace = FALSE),]
-USA.map<-qmap(c1.centroid,zoom=7,color="bw",
-              base_layer = ggplot(aes(x=lon, y=lat), data = locations))
-USA.map + 
-        geom_point(aes(x = lon, y = lat,size=4,shape=clust,color=clust), shape=22,data = locations ) +
-        #  stat_density2d(aes(x = INTPTLONG, y = INTPTLAT, fill = ..level.., alpha = ..level..),
-        #                 geom="polygon",
-        #                 data = test.data) +
-        # scale_fill_gradient(low = "green", high = "red")+  
-        theme(legend.position = "none", axis.title = element_blank(), text = element_text(size = 12))+
-        facet_wrap(~clust,scales="free")
+       
